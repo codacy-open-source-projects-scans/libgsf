@@ -1,0 +1,14 @@
+files
+libgsf-1-114
+libgsf-1-114-dbg
+libgsf-1-common
+libgsf-1-dev
+libgsf-bin
+libgsf-gnome-1-114
+libgsf-gnome-1-114-dbg
+libgsf-gnome-1-dev
+tmp
+*.pre*.debhelper
+*.post*.debhelper
+*.substvars
+*.debhelper.log
