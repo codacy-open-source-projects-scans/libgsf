@@ -6,7 +6,7 @@ AX_IS_RELEASE([git-directory])
 
 m4_define([libgsf_version_major], [1])
 m4_define([libgsf_version_minor], [14])
-m4_define([libgsf_version_micro], [53])
+m4_define([libgsf_version_micro], [54])
 m4_define([libgsf_version_extra], [])
 m4_define([libgsf_full_version],
     [libgsf_version_major.libgsf_version_minor.libgsf_version_micro[]libgsf_version_extra])
@@ -70,13 +70,17 @@ ifelse([
 ])
 dnl Modules required for libgsf
 libgsf_reqs="
-    gobject-2.0 >= 2.36.0
-    glib-2.0 >= 2.36.0
-    gio-2.0 >= 2.36.0
+    gobject-2.0 >= 2.62.0
+    glib-2.0 >= 2.62.0
+    gio-2.0 >= 2.62.0
     libxml-2.0 >= 2.4.16
 "
 
 PKG_CHECK_MODULES(LIBGSF, $libgsf_reqs)
+
+AC_DEFINE(GLIB_VERSION_MIN_REQUIRED, [GLIB_VERSION_2_62], [GLib symbol visibility])
+AC_DEFINE(GLIB_VERSION_MAX_ALLOWED, [GLIB_VERSION_2_62], [GLib symbol visibility])
+
 # GObject Introspection
 GIR_REQ=1.0.0
 AC_ARG_ENABLE(introspection,
@@ -180,23 +184,7 @@ AC_ARG_WITH([typelib-dir],
 )
 AC_SUBST(TYPELIBDIR)
 
-## this should come after `AC_PROG_CC'
-set_more_warnings=yes
-if test "$GCC" = yes -a "x$set_more_warnings" != xno; then
-	dnl Clang needs to option, or else it will appear to support any
-	dnl warning option
-	uwoption="-Werror=unknown-warning-option"
-	SAVE_CFLAGS="$CFLAGS"
-	CFLAGS="$CFLAGS $uwoption"
-	AC_MSG_CHECKING([whether gcc understands $uwoption])
-	AC_COMPILE_IFELSE(
-		[AC_LANG_PROGRAM([], [])],
-		[has_unknown_warning_option=yes],
-		[has_unknown_warning_option=no; uwoption=""])
-	AC_MSG_RESULT($has_unknown_warning_option)
-	CFLAGS="$SAVE_CFLAGS"
-
-	warning_options="-Wall -Werror=init-self -Werror=missing-include-dirs \
+AX_APPEND_COMPILE_FLAGS([-Wall -Werror=init-self -Werror=missing-include-dirs \
 			 -Wsign-compare -Werror=pointer-arith \
 			 -Wchar-subscripts -Wwrite-strings \
 			 -Wdeclaration-after-statement -Wnested-externs \
@@ -207,28 +195,7 @@ if test "$GCC" = yes -a "x$set_more_warnings" != xno; then
 			 -Werror=format-security -Wbitwise -Wcast-to-as \
 			 -Wdefault-bitfield-sign -Wdo-while -Wparen-string \
 			 -Wptr-subtraction-blows -Wreturn-void -Wtypesign \
-			 -Wstrict-prototypes -Wno-error=format-nonliteral "
-	for option in $warning_options ; do
-		SAVE_CFLAGS="$CFLAGS"
-		CFLAGS="$CFLAGS $uwoption $option"
-		AC_MSG_CHECKING([whether gcc understands $option])
-		dnl Include a system header so we ignore Werror=... flags
-		dnl that cause trouble.
-		AC_COMPILE_IFELSE(
-			[AC_LANG_PROGRAM([[#include <stdio.h>]], [])],
-			[has_option=yes],
-			[has_option=no])
-		CFLAGS="$SAVE_CFLAGS"
-		if test $has_option = yes; then
-			CFLAGS="$CFLAGS $option"
-		fi
-		AC_MSG_RESULT($has_option)
-		unset has_option
-		unset SAVE_CFLAGS
-	done
-	unset option
-fi
-AC_SUBST(WARN_CFLAGS)
+			 -Wstrict-prototypes -Wno-error=format-nonliteral])
 
 AC_CHECK_DECL(fdopen, fdopen_works=yes, fdopen_works=no)
 if test $fdopen_works = no ; then
@@ -490,9 +457,7 @@ tools/Makefile
 thumbnailer/Makefile
 po/Makefile.in
 gsf/version.c
-doc/version.xml
 libgsf-1.pc
-libgsf-1.spec
 libgsf-win32-1.pc
 libgsf-zip
 ])
