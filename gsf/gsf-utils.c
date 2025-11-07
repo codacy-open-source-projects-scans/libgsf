@@ -658,7 +658,7 @@ gsf_base64_decode_step (guint8 const *in, size_t len, guint8 *out,
 /**
  * gsf_base64_encode_simple:
  * @data: (array): data stream
- * @len: max length of data to encode
+ * @len: length of data to encode
  *
  * Encodes data from @data back into @data using base64 encoding.
  *
@@ -671,7 +671,11 @@ gsf_base64_encode_simple (guint8 const *data, size_t len)
 	int state = 0;
 	guint save = 0;
 	gboolean break_lines = TRUE;  /* This differs from g_base64_encode */
-	size_t outlen = len * 4 / 3 + 5;
+	size_t outlen = len + len / 3 + 10;
+
+	// Did we just overflow?  (Because who doesn't have 2^63 bytes of
+	// memory just for the input string?)
+	g_return_val_if_fail (len < G_MAXSIZE / 2, NULL);
 
 	if (break_lines)
 		outlen += outlen / 72 + 1;
