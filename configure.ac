@@ -6,7 +6,7 @@ AX_IS_RELEASE([git-directory])
 
 m4_define([libgsf_version_major], [1])
 m4_define([libgsf_version_minor], [14])
-m4_define([libgsf_version_micro], [54])
+m4_define([libgsf_version_micro], [55])
 m4_define([libgsf_version_extra], [])
 m4_define([libgsf_full_version],
     [libgsf_version_major.libgsf_version_minor.libgsf_version_micro[]libgsf_version_extra])
@@ -203,7 +203,7 @@ if test "$GCC" = yes -a "x$set_more_warnings" != xno; then
 	warning_options="-Wall -Werror=init-self -Werror=missing-include-dirs \
 			 -Wsign-compare -Werror=pointer-arith \
 			 -Wchar-subscripts -Wwrite-strings \
-			 -Wdeclaration-after-statement -Wnested-externs \
+			 -Wnested-externs \
 			 -Wmissing-noreturn \
 			 -Werror=missing-prototypes -Werror=nested-externs \
 			 -Werror=implicit-function-declaration \
