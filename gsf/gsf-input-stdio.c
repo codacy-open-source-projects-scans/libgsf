@@ -103,7 +103,7 @@ error:
 /**
  * gsf_input_stdio_new:
  * @filename: in utf8.
- * @err: (allow-none): place to store a #GError if anything goes wrong
+ * @err: (out) (optional) (nullable): place to store a #GError if anything goes wrong
  *
  * Returns: a new file or %NULL.
  **/
@@ -115,6 +115,9 @@ gsf_input_stdio_new (char const *filename, GError **err)
 	struct stat st;
 	FILE *file;
 	gsf_off_t size;
+
+	if (err)
+		*err = NULL;
 
 	g_return_val_if_fail (filename != NULL, NULL);
 

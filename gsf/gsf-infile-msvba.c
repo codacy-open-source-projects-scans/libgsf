@@ -146,7 +146,7 @@ vba_extract_module_source (GsfInfileMSVBA *vba, char const *name, guint32 src_of
 /**
  * vba_dir_read:
  * @vba: #GsfInfileMSVBA
- * @err: (allow-none): place to store a #GError if anything goes wrong
+ * @err: (out) (optional) (nullable): place to store a #GError if anything goes wrong
  *
  * Read an VBA dirctory and its project file.
  * along the way.
@@ -342,7 +342,7 @@ fail_stream :
 /**
  * vba_project_read:
  * @vba: #GsfInfileMSVBA
- * @err: (allow-none): place to store a #GError if anything goes wrong
+ * @err: (out) (optional) (nullable): place to store a #GError if anything goes wrong
  *
  * Read an VBA dirctory and its project file.
  * along the way.
@@ -352,6 +352,8 @@ fail_stream :
 static gboolean
 vba_project_read (GsfInfileMSVBA *vba, GError **err)
 {
+	if (err)
+		*err = NULL;
 	/* NOTE : This seems constant, find some confirmation */
 	static guint8 const signature[]	  = { 0xcc, 0x61 };
 	static struct {

@@ -994,7 +994,7 @@ GSF_CLASS (GsfInfileZip, gsf_infile_zip,
 /**
  * gsf_infile_zip_new:
  * @source: A base #GsfInput
- * @err: (allow-none): place to store a #GError if anything goes wrong
+ * @err: (out) (optional) (nullable): place to store a #GError if anything goes wrong
  *
  * Opens the root directory of a Zip file.
  * <note>This adds a reference to @source.</note>
@@ -1005,6 +1005,9 @@ GsfInfile *
 gsf_infile_zip_new (GsfInput *source, GError **err)
 {
 	GsfInfileZip *zip;
+
+	if (err)
+		*err = NULL;
 
 	g_return_val_if_fail (GSF_IS_INPUT (source), NULL);
 
