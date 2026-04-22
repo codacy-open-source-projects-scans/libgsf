@@ -226,27 +226,50 @@ static GHashTable *name_to_prop_hash = NULL;
 static char const *
 msole_vt_name (GsfMSOleVariantType type)
 {
-	static char const * const names[] = {
-		"VT_EMPTY",	"VT_NULL",	"VT_I2",	"VT_I4",	"VT_R4",
-		"VT_R8",	"VT_CY",	"VT_DATE",	"VT_BSTR",	"VT_DISPATCH",
-		"VT_ERROR",	"VT_BOOL",	"VT_VARIANT",	"VT_UNKNOWN",	"VT_DECIMAL",
-		NULL,		"VT_I1",	"VT_UI1",	"VT_UI2",	"VT_UI4",
-		"VT_I8",	"VT_UI8",	"VT_INT",	"VT_UINT",	"VT_VOID",
-		"VT_HRESULT",	"VT_PTR",	"VT_SAFEARRAY",	"VT_CARRAY",	"VT_USERDEFINED",
-		"VT_LPSTR",	"VT_LPWSTR",
-	};
-	static char const * const names2[] = {
-		"VT_FILETIME",
-		"VT_BLOB",	"VT_STREAM",	"VT_STORAGE",	"VT_STREAMED_OBJECT",
-		"VT_STORED_OBJECT", "VT_BLOB_OBJECT", "VT_CF",	"VT_CLSID"
-	};
-
 	type &= ~VT_VECTOR;
-	if (type <= VT_LPWSTR)
-		return names[type];
-	g_return_val_if_fail (type >= VT_FILETIME, "_UNKNOWN_");
-	g_return_val_if_fail (type <= VT_CLSID, "_UNKNOWN_");
-	return names2[type-VT_FILETIME];
+	switch (type) {
+	case VT_EMPTY:           return "VT_EMPTY";
+	case VT_NULL:            return "VT_NULL";
+	case VT_I2:              return "VT_I2";
+	case VT_I4:              return "VT_I4";
+	case VT_R4:              return "VT_R4";
+	case VT_R8:              return "VT_R8";
+	case VT_CY:              return "VT_CY";
+	case VT_DATE:            return "VT_DATE";
+	case VT_BSTR:            return "VT_BSTR";
+	case VT_DISPATCH:        return "VT_DISPATCH";
+	case VT_ERROR:           return "VT_ERROR";
+	case VT_BOOL:            return "VT_BOOL";
+	case VT_VARIANT:         return "VT_VARIANT";
+	case VT_UNKNOWN:         return "VT_UNKNOWN";
+	case VT_DECIMAL:         return "VT_DECIMAL";
+	case VT_I1:              return "VT_I1";
+	case VT_UI1:             return "VT_UI1";
+	case VT_UI2:             return "VT_UI2";
+	case VT_UI4:             return "VT_UI4";
+	case VT_I8:              return "VT_I8";
+	case VT_UI8:             return "VT_UI8";
+	case VT_INT:             return "VT_INT";
+	case VT_UINT:            return "VT_UINT";
+	case VT_VOID:            return "VT_VOID";
+	case VT_HRESULT:         return "VT_HRESULT";
+	case VT_PTR:             return "VT_PTR";
+	case VT_SAFEARRAY:       return "VT_SAFEARRAY";
+	case VT_CARRAY:          return "VT_CARRAY";
+	case VT_USERDEFINED:     return "VT_USERDEFINED";
+	case VT_LPSTR:           return "VT_LPSTR";
+	case VT_LPWSTR:          return "VT_LPWSTR";
+	case VT_FILETIME:        return "VT_FILETIME";
+	case VT_BLOB:            return "VT_BLOB";
+	case VT_STREAM:          return "VT_STREAM";
+	case VT_STORAGE:         return "VT_STORAGE";
+	case VT_STREAMED_OBJECT: return "VT_STREAMED_OBJECT";
+	case VT_STORED_OBJECT:   return "VT_STORED_OBJECT";
+	case VT_BLOB_OBJECT:     return "VT_BLOB_OBJECT";
+	case VT_CF:              return "VT_CF";
+	case VT_CLSID:           return "VT_CLSID";
+	default:                 return "_UNKNOWN_";
+	}
 }
 
 static char const *
@@ -264,7 +287,7 @@ msole_prop_id_to_gsf (GsfMSOleMetaDataSection *section, guint32 id, gboolean *li
 			d (g_print ("LINKED "););
 		}
 
-		res = g_hash_table_lookup (section->dict, GINT_TO_POINTER (id));
+		res = g_hash_table_lookup (section->dict, GUINT_TO_POINTER (id));
 
 		if (res != NULL) {
 			d (g_print ("%s", res););
@@ -304,20 +327,14 @@ msole_gsf_name_to_prop (char const *name)
 static void
 set_error_missing_data (GError **error, const char *property_name, gsize size_needed, gsize size_gotten)
 {
-	gchar *size_needed_str, *size_gotten_str;
-
-	size_needed_str = g_strdup_printf ("%" G_GSIZE_FORMAT, size_needed);
-	size_gotten_str = g_strdup_printf ("%" G_GSIZE_FORMAT, size_gotten);
 	g_set_error (error,
 		     GSF_ERROR,
 		     GSF_ERROR_INVALID_DATA,
-		     _("Missing data when reading the %s property; got %s bytes, "
-		       "but %s bytes at least are needed."),
+		     _("Missing data when reading the %s property; got %" G_GSIZE_FORMAT " bytes, "
+		       "but %" G_GSIZE_FORMAT " bytes at least are needed."),
 		     property_name,
-		     size_needed_str,
-		     size_gotten_str);
-	g_free (size_needed_str);
-	g_free (size_gotten_str);
+		     size_gotten,
+		     size_needed);
 }
 
 /* Can return errors from gsf_blob_new() and GSF_ERROR_INVALID_DATA */
@@ -356,16 +373,12 @@ parse_vt_cf (GValue *res, guint8 const **data, guint8 const *data_end, GError **
 	clip_size = GSF_LE_GET_GUINT32 (*data);
 
 	if (clip_size < 4) {	/* must emcompass int32 format plus data size */
-		gchar *size_str;
-
-		size_str = g_strdup_printf ("%" G_GSIZE_FORMAT, (gsize) clip_size);
 		g_set_error (error,
 			     GSF_ERROR,
 			     GSF_ERROR_INVALID_DATA,
 			     _("Corrupt data in the VT_CF property; clipboard data length must be at least 4 bytes, "
-			       "but the data says it only has %s bytes available."),
-			     size_str);
-		g_free (size_str);
+			       "but the data says it only has %" G_GSIZE_FORMAT " bytes available."),
+			     (gsize) clip_size);
 		return FALSE;
 	}
 
@@ -500,8 +513,7 @@ msole_prop_min_size (guint32 type)
 	bytes_needed = (_n);						\
 	if (_s1 > 0 && (data_end - *data) / _s1 < bytes_needed) {	\
 		g_warning ("Invalid MS property or file truncated");	\
-		g_free (res);						\
-		return NULL;						\
+		return FALSE;						\
 	}								\
 	bytes_needed *= _s1;						\
   } while (0)
@@ -510,18 +522,18 @@ msole_prop_min_size (guint32 type)
 
 #define ADVANCE do { *data += bytes_needed; } while (0)
 
-static GValue *
+static gboolean
 msole_prop_parse (GsfMSOleMetaDataSection *section,
-		  guint32 type, guint8 const **data, guint8 const *data_end)
+		  guint32 type, guint8 const **data, guint8 const *data_end,
+		  GValue *res)
 {
-	GValue *res = NULL;
 	char *str;
 	guint32 len;
 	gboolean const is_vector = type & VT_VECTOR;
 	GError *error;
 	guint bytes_needed;
 
-	g_return_val_if_fail (!(type & (unsigned)(~0x1fff)), NULL); /* not valid in a prop set */
+	g_return_val_if_fail (!(type & (unsigned)(~0x1fff)), FALSE); /* not valid in a prop set */
 
 	type &= 0xfff;
 
@@ -548,29 +560,23 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		vector = gsf_docprop_vector_new ();
 
 		for (i = 0 ; i < n ; i++) {
-			GValue *v;
+			GValue v = G_VALUE_INIT;
 			guint8 const *data0 = *data;
 			d (g_print ("\t[%d] ", i););
-			v = msole_prop_parse (section, type, data, data_end);
-			if (v) {
-				if (G_IS_VALUE (v)) {
-					gsf_docprop_vector_append (vector, v);
-					g_value_unset (v);
-				}
-				g_free (v);
+			if (msole_prop_parse (section, type, data, data_end, &v)) {
+				gsf_docprop_vector_append (vector, &v);
+				g_value_unset (&v);
 			}
 			if (*data == data0)
 				break;
 		}
 
-		res = g_new0 (GValue, 1);
 		g_value_init (res, GSF_DOCPROP_VECTOR_TYPE);
 		g_value_set_object (res, vector);
 		g_object_unref (vector);
-		return res;
+		return TRUE;
 	}
 
-	res = g_new0 (GValue, 1);
 	d (g_print ("%s\n", msole_vt_name (type)););
 	switch (type) {
 	case VT_EMPTY:
@@ -579,12 +585,12 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		 * associated with it; that is, the size of the value is zero.
 		 */
 		/* value::unset == empty */
-		break;
+		return TRUE;
 
 	case VT_NULL:
 		/* This is like a pointer to NULL */
 		/* value::unset == null too :-) do we need to distinguish ? */
-		break;
+		return TRUE;
 
 	case VT_I2:
 		/* 2-byte signed integer */
@@ -592,7 +598,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_INT);
 		g_value_set_int	(res, GSF_LE_GET_GINT16 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_I4:
 		/* 4-byte signed integer */
@@ -600,7 +606,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_INT);
 		g_value_set_int	(res, GSF_LE_GET_GINT32 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_R4:
 		/* 32-bit IEEE floating-point value */
@@ -608,7 +614,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_FLOAT);
 		g_value_set_float (res, GSF_LE_GET_FLOAT (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_R8:
 		/* 64-bit IEEE floating-point value */
@@ -616,7 +622,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_DOUBLE);
 		g_value_set_double (res, GSF_LE_GET_DOUBLE (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_CY:
 		/* 8-byte two's complement integer (scaled by 10,000) */
@@ -624,7 +630,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		/* CHEAT : just store as an int64 for now */
 		g_value_init (res, G_TYPE_INT64);
 		g_value_set_int64 (res, GSF_LE_GET_GINT64 (*data));
-		break;
+		return TRUE;
 
 	case VT_DATE:
 		/*
@@ -636,7 +642,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 				   type, type);
 		NEED_BYTES (8);
 		ADVANCE;
-		break;
+		return FALSE;
 
 	case VT_BSTR:
 		/*
@@ -649,13 +655,13 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 				   type, type);
 		NEED_BYTES (4);
 		ADVANCE;
-		break;
+		return FALSE;
 
 	case VT_DISPATCH:
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unhandled property value type %d (0x%x)",
 				   type, type);
-		break;
+		return FALSE;
 
 	case VT_BOOL:
 		/* A boolean (WORD) value containg 0 (false) or -1 (true). */
@@ -663,7 +669,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_BOOLEAN);
 		g_value_set_boolean (res, **data ? TRUE : FALSE);
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_VARIANT :	 d (g_print ("\tcontaining a "););
 		/*
@@ -672,10 +678,9 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		 *  VT_VECTOR.
 		 */
 		NEED_BYTES (4);
-		g_free (res);
 		type = GSF_LE_GET_GUINT32 (*data);
 		ADVANCE;
-		return msole_prop_parse (section, type, data, data_end);
+		return msole_prop_parse (section, type, data, data_end, res);
 
 	case VT_UI1:
 		/* 1-byte unsigned integer */
@@ -683,7 +688,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_UCHAR);
 		g_value_set_uchar (res, GSF_LE_GET_GUINT8 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_I1:
 		/* 1-byte signed integer */
@@ -691,7 +696,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_CHAR);
 		g_value_set_schar (res, GSF_LE_GET_GINT8 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_UI2:
 		/* 2-byte unsigned integer */
@@ -699,7 +704,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_UINT);
 		g_value_set_uint (res, GSF_LE_GET_GUINT16 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_UI4:
 		/* 4-type unsigned integer */
@@ -707,7 +712,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_UINT);
 		g_value_set_uint (res, GSF_LE_GET_GUINT32 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_I8 :		 d (g_print ("VT_I8\n"););
 		/* 8-byte signed integer */
@@ -715,7 +720,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_INT64);
 		g_value_set_int64 (res, GSF_LE_GET_GINT64 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_UI8:
 		/* 8-byte unsigned integer */
@@ -723,7 +728,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		g_value_init (res, G_TYPE_UINT64);
 		g_value_set_uint64 (res, GSF_LE_GET_GUINT64 (*data));
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_LPSTR: {
 		guint32 need;
@@ -737,7 +742,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		len = GSF_LE_GET_GUINT32 (*data);
 		ADVANCE;
 
-		g_return_val_if_fail (len < 0x10000, NULL);
+		g_return_val_if_fail (len < 0x10000, FALSE);
 
 		need = len;
 		if (section->char_size > 1 && (need & 3))
@@ -760,7 +765,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 			g_warning ("unknown error converting string property, using blank");
 		}
 		ADVANCE;
-		break;
+		return TRUE;
 	}
 
 	case VT_LPWSTR:
@@ -777,7 +782,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 
 		NEED_RECS (len, 2);
 
-		g_return_val_if_fail (len < 0x10000, NULL);
+		g_return_val_if_fail (len < 0x10000, FALSE);
 
 		error = NULL;
 		d (gsf_mem_dump (*data, len * 2););
@@ -795,7 +800,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 			g_warning ("unknown error converting string property, using blank");
 		}
 		ADVANCE;
-		break;
+		return TRUE;
 
 	case VT_FILETIME : {
 		/* 64-bit FILETIME structure, as defined by Win32. */
@@ -816,7 +821,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		gsf_timestamp_free (ts);
 
 		ADVANCE;
-		break;
+		return TRUE;
 	}
 
 	case VT_BLOB:
@@ -833,9 +838,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unhandled property value type %d (0x%x)",
 				   type, type);
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	case VT_STREAM:
 		/*
@@ -847,9 +850,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unhandled property value type %d (0x%x)",
 				   type, type);
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	case VT_STORAGE:
 		/*
@@ -861,9 +862,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unhandled property value type %d (0x%x)",
 				   type, type);
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	case VT_STREAMED_OBJECT:
 		/*
@@ -874,9 +873,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unhandled property value type %d (0x%x)",
 				   type, type);
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	case VT_STORED_OBJECT:
 		/*
@@ -886,9 +883,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unhandled property value type %d (0x%x)",
 				   type, type);
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	case VT_BLOB_OBJECT:
 		/*
@@ -902,9 +897,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unhandled property value type %d (0x%x)",
 				   type, type);
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	case VT_CF:
 		error = NULL;
@@ -917,18 +910,15 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 			else {
 				g_warning ("unknown error parsing vt_cf");
 			}
-			g_free (res);
-			res = NULL;
+			return FALSE;
 		}
-		break;
+		return TRUE;
 
 	case VT_CLSID:
 		/* A class ID (or other GUID) */
 		NEED_BYTES (16);
 		ADVANCE;
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	case VT_ERROR:
 		/* A DWORD containing a status code. */
@@ -944,19 +934,16 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 	case VT_USERDEFINED:
 		g_warning ("type %s (0x%x) is not permitted in property sets",
 			   msole_vt_name (type), type);
-		g_free (res);
-		res = NULL;
-		break;
+		return FALSE;
 
 	default:
 		if (msole_debug (DEBUG_UNKNOWN_PROPS))
 			g_warning ("Unknown property type %d (0x%x)",
 				   type, type);
-		g_free (res);
-		res = NULL;
+		return FALSE;
 	}
 
-	if (res != NULL && G_IS_VALUE (res)) {
+	if (G_IS_VALUE (res)) {
 		d ( {
 			char *val = g_strdup_value_contents (res);
 			g_print ("%s\n", val);
@@ -971,10 +958,9 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 				g_printerr ("A %d property could not be parsed\n", type);
 			}
 		});
-		g_free (res);
-		res = NULL;
+		return FALSE;
 	}
-	return res;
+	return TRUE;
 }
 #undef NEED_BYTES
 #undef NEED_RECS
@@ -993,7 +979,6 @@ msole_prop_read (GsfInput *in,
 		? section->size
 		: props[i+1].offset;
 	char   *name;
-	GValue *val;
 
 	g_return_val_if_fail (i < section->num_props, FALSE);
 	g_return_val_if_fail (size >= props[i].offset + 4, FALSE);
@@ -1100,7 +1085,7 @@ msole_prop_read (GsfInput *in,
 
 			d (g_print ("\t%u == %s\n", id, name););
 			g_hash_table_replace (section->dict,
-				GINT_TO_POINTER (id), name);
+				GUINT_TO_POINTER (id), name);
 
 			/* MS documentation blows goats !
 			 * The docs claim there are padding bytes in the dictionary.
@@ -1113,36 +1098,36 @@ msole_prop_read (GsfInput *in,
 		}
 	} else {
 		gboolean linked;
+		GValue stack_val = G_VALUE_INIT;
 		d (g_print ("===> %u) ", i);
 		   gsf_mem_dump (data-4, size););
 
 		name = g_strdup (msole_prop_id_to_gsf (section, props[i].id, &linked));
 		d (g_print (" @ %x %x = ", (unsigned)props[i].offset, (unsigned)size););
-		val = msole_prop_parse (section, type, &data, data + size - 4);
 
-		if (NULL != name && NULL != val) {
-			if (linked) {
-				GsfDocProp *prop = gsf_doc_meta_data_lookup (accum, name);
-				if (NULL == prop) {
-					g_warning ("linking property '%s' before it\'s value is specified",
-						   (name ? name : "<null>"));
-				} else if (!G_VALUE_HOLDS_STRING (val)) {
-					g_warning ("linking property '%s' before it\'s value is specified",
-						   (name ? name : "<null>"));
-				} else
-					gsf_doc_prop_set_link (prop,
-						g_value_dup_string (val));
+		if (msole_prop_parse (section, type, &data, data + size - 4, &stack_val)) {
+			if (NULL != name) {
+				if (linked) {
+					GsfDocProp *prop = gsf_doc_meta_data_lookup (accum, name);
+					if (NULL == prop) {
+						g_warning ("linking property '%s' before it\'s value is specified",
+							   (name ? name : "<null>"));
+					} else if (!G_VALUE_HOLDS_STRING (&stack_val)) {
+						g_warning ("linking property '%s' before it\'s value is specified",
+							   (name ? name : "<null>"));
+					} else
+						gsf_doc_prop_set_link (prop,
+							g_value_dup_string (&stack_val));
+					g_value_unset (&stack_val);
+				} else {
+					GValue *heap_val = g_new0 (GValue, 1);
+					*heap_val = stack_val;
+					gsf_doc_meta_data_insert (accum, name, heap_val);
+					name = NULL;
+				}
 			} else {
-				gsf_doc_meta_data_insert (accum, name, val);
-				val = NULL;
-				name = NULL;
+				g_value_unset (&stack_val);
 			}
-		}
-
-		if (NULL != val) {
-			if (G_IS_VALUE (val))
-				g_value_unset (val);
-			g_free (val);
 		}
 		g_free (name);
 	}
@@ -1691,7 +1676,7 @@ msole_metadata_write_section (WritePropState *state, gboolean user)
 		name = gsf_doc_prop_get_name (prop);
 		if (user) {
 			tmp = g_hash_table_lookup (state->dict, name);
-			offsets[i].id = GPOINTER_TO_INT (tmp);
+			offsets[i].id = GPOINTER_TO_UINT (tmp);
 			if (offsets[i].id < 2) {
 				g_warning ("Invalid ID (%d) for custom name '%s'", offsets[i].id, name);
 				continue;
@@ -1769,7 +1754,7 @@ cb_count_props (char const *name, GsfDocProp *prop, WritePropState *state)
 		if (NULL == state->dict)
 			state->dict = g_hash_table_new (g_str_hash, g_str_equal);
 		g_hash_table_insert (state->dict,
-			(gpointer) name, GINT_TO_POINTER (state->user.count));
+			(gpointer) name, GUINT_TO_POINTER (state->user.count));
 		state->user.count += gsf_doc_prop_get_link (prop) ? 2 : 1;
 		state->user.props = g_slist_prepend (state->user.props, prop);
 	}

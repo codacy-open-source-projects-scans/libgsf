@@ -51,7 +51,7 @@ typedef struct {
 	gboolean  use_sb;
 	guint32   first_block;
 	gboolean  is_directory;
-	GList	 *children;
+	GPtrArray *children;
 	unsigned char clsid[16];	/* 16 byte GUID used by some apps */
 	GDateTime *modtime;
 } MSOleDirent;
@@ -123,7 +123,7 @@ ole_seek_block (GsfInfileMSOle const *ole, guint32 block, gsf_off_t offset)
  * ole_get_block: (skip)
  * @ole: the infile
  * @block: block number
- * @buffer: optionally %NULL
+ * @buffer: (out) (optional) (nullable): place to store a #GError if anything goes wrong
  *
  * Read a block of data from the underlying input.
  * Be really anal.
@@ -286,17 +286,21 @@ ole_dirent_cmp (MSOleDirent const *a, MSOleDirent const *b)
 static GDateTime *
 datetime_from_filetime (guint64 ft)
 {
-	static const guint64 epoch = G_GINT64_CONSTANT (11644473600);
+	static const gint64 epoch = G_GINT64_CONSTANT (11644473600);
 	GDateTime *dt, *res;
 
 	if (!ft)
 		return NULL;
 
-	/* ft is number of 100ns since Jan 1 1601 */
+	/* ft is number of 100ns since Jan 1 1601 (UTC) */
+	/* Convert to signed seconds since 1970 (UTC) */
+	gint64 seconds = (gint64)(ft / 10000000u) - epoch;
 
-	dt = g_date_time_new_from_unix_local (ft / 10000000u - epoch);
+	dt = g_date_time_new_from_unix_utc (seconds);
 	if (!dt)
 		return NULL;
+
+	/* Add the remaining microseconds */
 	res = g_date_time_add (dt, (ft % 10000000u) / 10);
 	g_date_time_unref (dt);
 
@@ -431,10 +435,20 @@ ole_dirent_new (GsfInfileMSOle *ole, guint32 entry, MSOleDirent *parent,
 			dirent->name, dirent->size, dirent->first_block);
 #endif
 
-		if (parent)
-			parent->children = g_list_insert_sorted (parent->children,
-								 dirent, (GCompareFunc)ole_dirent_cmp);
-		else
+		if (parent) {
+			if (parent->children == NULL)
+				parent->children = g_ptr_array_new ();
+			GPtrArray *children = parent->children;
+			guint lower = 0, upper = children->len;
+			while (lower < upper) {
+				guint mid = lower + (upper - lower) / 2;
+				if (ole_dirent_cmp (g_ptr_array_index (children, mid), dirent) < 0)
+					lower = mid + 1;
+				else
+					upper = mid;
+			}
+			g_ptr_array_insert (children, lower, dirent);
+		} else
 			ole->dirent = dirent;
 
 		/* NOTE: "prev" and "next" links are a tree, not a linked list */
@@ -454,17 +468,19 @@ ole_dirent_new (GsfInfileMSOle *ole, guint32 entry, MSOleDirent *parent,
 static void
 ole_dirent_free (MSOleDirent *dirent)
 {
-	GList *tmp;
 	g_return_if_fail (dirent != NULL);
 
 	g_free (dirent->name);
 	gsf_msole_sorting_key_free (dirent->key);
 
-	for (tmp = dirent->children; tmp; tmp = tmp->next) {
-		MSOleDirent *child = tmp->data;
-		ole_dirent_free (child);
+	if (dirent->children) {
+		unsigned ui;
+		for (ui = 0; ui < dirent->children->len; ui++) {
+			MSOleDirent *child = g_ptr_array_index (dirent->children, ui);
+			ole_dirent_free (child);
+		}
+		g_ptr_array_free (dirent->children, TRUE);
 	}
-	g_list_free (dirent->children);
 
 	if (dirent->modtime)
 		g_date_time_unref (dirent->modtime);
@@ -508,6 +524,9 @@ ole_dup (GsfInfileMSOle const *src, GError **err)
 	GsfInfileMSOle	*dst;
 	GsfInput *input;
 
+	if (err)
+		*err = NULL;
+
 	g_return_val_if_fail (src != NULL, NULL);
 
 	input = gsf_input_dup (src->input, err);
@@ -542,6 +561,9 @@ ole_init_info (GsfInfileMSOle *ole, GError **err)
 	guint32 metabat_block, *ptr;
 	gboolean fail;
 	size_t num_blocks, isize;
+
+	if (err)
+		*err = NULL;
 
 	/* check the header */
 	if (gsf_input_seek (ole->input, 0, G_SEEK_SET) ||
@@ -617,6 +639,7 @@ ole_init_info (GsfInfileMSOle *ole, GError **err)
 
 		metabat = g_try_new (guint32, MAX (info->bb.size, OLE_HEADER_SIZE));
 		if (!metabat) {
+			ole->info = NULL;
 			g_free (info);
 			if (err != NULL)
 				*err = g_error_new (gsf_input_error_id (), 0,
@@ -741,6 +764,9 @@ gsf_infile_msole_dup (GsfInput *src_input, GError **err)
 	GsfInfileMSOle const *src = GSF_INFILE_MSOLE (src_input);
 	GsfInfileMSOle *parent = GSF_INFILE_MSOLE (gsf_input_container (src_input));
 
+	if (err)
+		*err = NULL;
+
 	return gsf_infile_msole_new_child (parent, src->dirent, err);
 }
 
@@ -834,6 +860,9 @@ gsf_infile_msole_new_child (GsfInfileMSOle *parent,
 	GsfInput *sb_file = NULL;
 	size_t size_guess;
 
+	if (err)
+		*err = NULL;
+
 	child = ole_dup (parent, err);
 	if (!child)
 		return NULL;
@@ -917,14 +946,15 @@ static GsfInput *
 gsf_infile_msole_child_by_index (GsfInfile *infile, int target, GError **err)
 {
 	GsfInfileMSOle *ole = GSF_INFILE_MSOLE (infile);
-	GList *p;
+	GPtrArray *children = ole->dirent->children;
 
-	for (p = ole->dirent->children; p != NULL ; p = p->next) {
-		MSOleDirent *dirent = p->data;
-		if (target-- <= 0)
-			return gsf_infile_msole_new_child
-				(ole, dirent, err);
-	}
+	if (err)
+		*err = NULL;
+
+	if (children == NULL && target >= 0 && (unsigned)target < children->len)
+		return gsf_infile_msole_new_child
+			(ole, g_ptr_array_index (children, target), err);
+
 	return NULL;
 }
 
@@ -932,13 +962,11 @@ static char const *
 gsf_infile_msole_name_by_index (GsfInfile *infile, int target)
 {
 	GsfInfileMSOle *ole = GSF_INFILE_MSOLE (infile);
-	GList *p;
+	GPtrArray *children = ole->dirent->children;
 
-	for (p = ole->dirent->children; p != NULL ; p = p->next) {
-		MSOleDirent *dirent = p->data;
-		if (target-- <= 0)
-			return dirent->name;
-	}
+	if (children != NULL && target >= 0 && (unsigned)target < children->len)
+		return ((MSOleDirent *)g_ptr_array_index (children, target))->name;
+
 	return NULL;
 }
 
@@ -946,12 +974,17 @@ static GsfInput *
 gsf_infile_msole_child_by_name (GsfInfile *infile, char const *name, GError **err)
 {
 	GsfInfileMSOle *ole = GSF_INFILE_MSOLE (infile);
-	GList *p;
+	GPtrArray *children = ole->dirent->children;
 
-	for (p = ole->dirent->children; p != NULL ; p = p->next) {
-		MSOleDirent *dirent = p->data;
-		if (dirent->name != NULL && !strcmp (name, dirent->name))
-			return gsf_infile_msole_new_child (ole, dirent, err);
+	if (err)
+		*err = NULL;
+
+	if (children != NULL) {
+		for (guint i = 0; i < children->len; i++) {
+			MSOleDirent *dirent = g_ptr_array_index (children, i);
+			if (!g_strcmp0 (name, dirent->name))
+				return gsf_infile_msole_new_child (ole, dirent, err);
+		}
 	}
 	return NULL;
 }
@@ -965,7 +998,7 @@ gsf_infile_msole_num_children (GsfInfile *infile)
 
 	if (!ole->dirent->is_directory)
 		return -1;
-	return g_list_length (ole->dirent->children);
+	return ole->dirent->children ? ole->dirent->children->len : 0;
 }
 
 static void
@@ -1007,7 +1040,7 @@ GSF_CLASS (GsfInfileMSOle, gsf_infile_msole,
 /**
  * gsf_infile_msole_new:
  * @source: #GsfInput
- * @err: (nullable): place to store an error
+ * @err: (out) (optional) (nullable): place to store an error
  *
  * Opens the root directory of an MS OLE file.
  * <note>This adds a reference to @source.</note>
@@ -1019,6 +1052,9 @@ gsf_infile_msole_new (GsfInput *source, GError **err)
 {
 	GsfInfileMSOle *ole;
 	gsf_off_t calling_pos;
+
+	if (err)
+		*err = NULL;
 
 	g_return_val_if_fail (GSF_IS_INPUT (source), NULL);
 

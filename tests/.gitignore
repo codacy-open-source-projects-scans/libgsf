@@ -8,14 +8,17 @@ Makefile.in
 ID
 test-bzip
 test-cat-zip
+test-compress
 test-cp
 test-cp-msole
 test-cp-zip
+test-csv
 test-dump-msole
 test-gio
 test-gzip1
 test-gzip2
 test-http
+test-iconv
 test-input1
 test-ls-zip
 test-msole-printf
@@ -23,6 +26,7 @@ test-msole1
 test-msole2
 test-msvba
 test-msvba-zip
+test-ole
 test-out-bzip
 test-out-gzip
 test-out-gzip1

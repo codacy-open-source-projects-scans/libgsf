@@ -62,7 +62,7 @@ struct _GsfOutfileMSOle {
 
 	union {
 		struct {
-			GSList 	  *children;
+			GPtrArray *children;
 			GPtrArray *root_order;	/* only valid for the root */
 		} dir;
 		struct {
@@ -130,8 +130,10 @@ gsf_outfile_msole_finalize (GObject *obj)
 
 	switch (ole->type) {
 	case MSOLE_DIR:
-		g_slist_free (ole->content.dir.children);
-		ole->content.dir.children = NULL;
+		if (ole->content.dir.children != NULL) {
+			g_ptr_array_free (ole->content.dir.children, TRUE);
+			ole->content.dir.children = NULL;
+		}
 		if (ole->content.dir.root_order != NULL)
 			g_warning ("Finalizing a MSOle Outfile without closing it.");
 		break;
@@ -282,15 +284,16 @@ ole_write_const (GsfOutput *sink, guint32 value, unsigned n)
 static guint64
 datetime_to_filetime (GDateTime *dt)
 {
-	static const guint64 epoch = G_GINT64_CONSTANT (11644473600);
+	static const gint64 epoch = G_GINT64_CONSTANT (11644473600);
 
 	if (!dt)
 		return 0u;
 
-	/* ft is number of 100ns since Jan 1 1601 */
+	/* ft is number of 100ns since Jan 1 1601 (UTC) */
+	/* dt is converted to UTC seconds by g_date_time_to_unix */
 
-	return (g_date_time_to_unix(dt) + epoch) * 10000000u
-		+ g_date_time_get_microsecond(dt) * 10u;
+	return (guint64)(g_date_time_to_unix (dt) + epoch) * 10000000u
+		+ (guint64)g_date_time_get_microsecond (dt) * 10u;
 }
 
 static void
@@ -417,23 +420,22 @@ gsf_outfile_msole_write_directory (GsfOutfileMSOle *ole)
 		tmp = gsf_output_container (GSF_OUTPUT (child));
 		next = DIRENT_MAGIC_END;
 		if (child->root != child && tmp != NULL) {
-			GSList *ptr = GSF_OUTFILE_MSOLE (tmp)->content.dir.children;
-			for (; ptr != NULL ; ptr = ptr->next)
-				if (ptr->data == child) {
-					if (ptr->next != NULL) {
-						GsfOutfileMSOle *sibling = ptr->next->data;
-						next = sibling->child_index;
-					}
-					break;
+			GPtrArray *children = GSF_OUTFILE_MSOLE (tmp)->content.dir.children;
+			guint idx;
+			if (g_ptr_array_find (children, child, &idx)) {
+				if (idx + 1 < children->len) {
+					GsfOutfileMSOle *sibling = g_ptr_array_index (children, idx + 1);
+					next = sibling->child_index;
 				}
+			}
 		}
 		/* make linked list rather than tree, only use next */
 		GSF_LE_SET_GUINT32 (buf + DIRENT_PREV, DIRENT_MAGIC_END);
 		GSF_LE_SET_GUINT32 (buf + DIRENT_NEXT, next);
 
 		child_index = DIRENT_MAGIC_END;
-		if (child->type == MSOLE_DIR && child->content.dir.children != NULL) {
-			GsfOutfileMSOle *first = child->content.dir.children->data;
+		if (child->type == MSOLE_DIR && child->content.dir.children != NULL && child->content.dir.children->len > 0) {
+			GsfOutfileMSOle *first = g_ptr_array_index (child->content.dir.children, 0);
 			child_index = first->child_index;
 		}
 		GSF_LE_SET_GUINT32 (buf + DIRENT_CHILD, child_index);
@@ -467,20 +469,35 @@ gsf_outfile_msole_write_directory (GsfOutfileMSOle *ole)
 		// by _tell and ->cur_size may be out of sync.  We don't
 		// want to loop forever here.
 
-		unsigned i = ((ole->sink->cur_size
-		      + BAT_INDEX_SIZE * (num_bat + num_xbat)
+		gsf_off_t i_full = ((ole->sink->cur_size
+		      + (gsf_off_t)BAT_INDEX_SIZE * (num_bat + num_xbat)
 		      - OLE_HEADER_SIZE - 1) >> ole->bb.shift) + 1;
-		i -= bat_start;
-		if (num_bat != i) {
-			num_bat = i;
+
+		if (i_full < (gsf_off_t)bat_start)
+			break;
+
+		gsf_off_t n_bat = i_full - bat_start;
+		if (n_bat > G_MAXUINT32) {
+			g_warning ("File too big: too many BAT blocks (%" GSF_OFF_T_FORMAT ")", n_bat);
+			return FALSE;
+		}
+
+		if (num_bat != (guint32)n_bat) {
+			num_bat = (guint32)n_bat;
 			continue;
 		}
-		i = 0;
+
+		gsf_off_t n_xbat = 0;
 		if (num_bat > OLE_HEADER_METABAT_SIZE)
-			i = 1 + ((num_bat - OLE_HEADER_METABAT_SIZE - 1)
-				 / metabat_size);
-		if (num_xbat != i) {
-			num_xbat = i;
+			n_xbat = 1 + ((num_bat - OLE_HEADER_METABAT_SIZE - 1)
+				 / (gsf_off_t)metabat_size);
+		if (n_xbat > G_MAXUINT32) {
+			g_warning ("File too big: too many X-BAT blocks (%" GSF_OFF_T_FORMAT ")", n_xbat);
+			return FALSE;
+		}
+
+		if (num_xbat != (unsigned)n_xbat) {
+			num_xbat = (unsigned)n_xbat;
 			continue;
 		}
 
@@ -712,7 +729,7 @@ gsf_outfile_msole_new_child (GsfOutfile *parent,
 		GSF_OUTFILE_MSOLE_TYPE, first_property_name, args);
 	if (is_dir) {
 		child->type = MSOLE_DIR;
-		child->content.dir.children = NULL;
+		child->content.dir.children = g_ptr_array_new ();
 	} else {
 		/* start as small block */
 		child->type = MSOLE_SMALL_BLOCK;
@@ -725,9 +742,18 @@ gsf_outfile_msole_new_child (GsfOutfile *parent,
 	gsf_output_set_name (GSF_OUTPUT (child), name);
 	gsf_output_set_container (GSF_OUTPUT (child), parent);
 
-	ole_parent->content.dir.children = g_slist_insert_sorted (
-		ole_parent->content.dir.children, child,
-		(GCompareFunc)ole_name_cmp);
+	{
+		GPtrArray *children = ole_parent->content.dir.children;
+		guint lower = 0, upper = children->len;
+		while (lower < upper) {
+			guint mid = lower + (upper - lower) / 2;
+			if (ole_name_cmp (g_ptr_array_index (children, mid), child) < 0)
+				lower = mid + 1;
+			else
+				upper = mid;
+		}
+		g_ptr_array_insert (children, lower, child);
+	}
 	ole_register_child (ole_parent->root, child);
 
 	return GSF_OUTPUT (child);
@@ -742,8 +768,7 @@ gsf_outfile_msole_init (GObject *obj)
 	ole->root   = NULL;
 	ole->type   = MSOLE_DIR;
 
-	ole->content.dir.children = NULL;
-	ole->content.dir.root_order = NULL;
+	memset (&ole->content, 0, sizeof (ole->content));
 	memset (ole->clsid, 0, sizeof (ole->clsid));
 }
 
@@ -911,6 +936,7 @@ gsf_outfile_msole_new_full (GsfOutput *sink, guint bb_size, guint sb_size)
 			    "name", gsf_output_name (sink),
 			    NULL);
 	ole->type = MSOLE_DIR;
+	ole->content.dir.children = g_ptr_array_new ();
 	ole->content.dir.root_order = g_ptr_array_new ();
 	ole_register_child (ole, ole);
 
@@ -964,6 +990,7 @@ gboolean
 gsf_outfile_msole_set_class_id (GsfOutfileMSOle *ole, guint8 const *clsid)
 {
 	g_return_val_if_fail (ole != NULL && ole->type == MSOLE_DIR, FALSE);
+	g_return_val_if_fail (clsid != NULL, FALSE);
 	memcpy (ole->clsid, clsid, sizeof (ole->clsid));
 	return TRUE;
 }
