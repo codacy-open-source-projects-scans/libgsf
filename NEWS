@@ -1,3 +1,32 @@
+libgsf 1.14.61
+
+Morten:
+	* Deal with newer compiler warnings.
+
+--------------------------------------------------------------------------
+libgsf 1.14.60
+
+Morten:
+	* Fix ABW for ole2.  [#54]
+
+--------------------------------------------------------------------------
+libgsf 1.14.59
+
+Morten:
+	* Fix some OLE2 edge cases.  [#46] [#47]
+	* Plug leak [#49]
+	* Improve thread safety of GSF_CLASS_FULL [#52]
+	* Fix zip read for corrupted stream.  [#50]
+	* Fix ole2 leaks.
+	* Protect ole2 loader from crazy recursion.  [#51]
+
+--------------------------------------------------------------------------
+libgsf 1.14.58
+
+Morten:
+	* Fix gsf_infile_msole_child_by_index
+
+--------------------------------------------------------------------------
 libgsf 1.14.57
 
 Morten:

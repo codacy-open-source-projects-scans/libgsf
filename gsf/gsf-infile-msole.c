@@ -156,9 +156,9 @@ static gboolean
 ole_make_bat (MSOleBAT const *metabat, size_t size_guess, guint32 block,
 	      MSOleBAT *res)
 {
-	/* NOTE : Only use size as a suggestion, sometimes it is wrong */
-	GArray *bat = g_array_sized_new (FALSE, FALSE,
-		sizeof (guint32), size_guess);
+	/* NOTE: Only use size as a suggestion, sometimes it is wrong */
+	GArray *bat = g_array_sized_new (FALSE, FALSE, sizeof (guint32),
+					 MIN (size_guess, 1000000u));
 
 	guint8 *used = g_try_malloc0 (1 + metabat->num_blocks / 8);
 	if (used == NULL) {
@@ -267,8 +267,17 @@ ole_info_get_sb_file (GsfInfileMSOle *parent)
 			  parent->info->num_sbat, parent->info->sbat_start, &meta_sbat))
 		return NULL;
 
-	parent->info->sb.bat.num_blocks = meta_sbat.num_blocks * (parent->info->bb.size / BAT_INDEX_SIZE);
-	parent->info->sb.bat.block	= g_new0 (guint32, parent->info->sb.bat.num_blocks);
+	gsf_off_t num_blocks = (gsf_off_t)(meta_sbat.num_blocks) * (parent->info->bb.size / BAT_INDEX_SIZE);
+	parent->info->sb.bat.num_blocks = num_blocks;
+	parent->info->sb.bat.block = (num_blocks == parent->info->sb.bat.num_blocks)
+		? g_try_new0 (guint32, parent->info->sb.bat.num_blocks)
+		: NULL;
+	if (!parent->info->sb.bat.block) {
+		// OOM or zero-size allocation
+		ols_bat_release (&meta_sbat);
+		return NULL;
+	}
+
 	ole_info_read_metabat (parent, parent->info->sb.bat.block,
 		parent->info->sb.bat.num_blocks,
 		meta_sbat.block, meta_sbat.block + meta_sbat.num_blocks);
@@ -365,6 +374,17 @@ ole_dirent_new (GsfInfileMSOle *ole, guint32 entry, MSOleDirent *parent,
 
 		if (entry >= (guint32)DIRENT_MAGIC_END)
 			continue;
+
+		// The root directory entry has no siblings, so its "prev"
+		// and "next" links -- queued below with a NULL parent --
+		// should always be DIRENT_MAGIC_END.  A malformed file can
+		// point them at further entries, and each one reaching the
+		// "ole->dirent = dirent" below would overwrite the root we
+		// already built, leaking that whole tree
+		if (parent == NULL && ole->dirent != NULL) {
+			g_warning ("Multiple root directory entries");
+			continue;
+		}
 
 		if (entry >= G_MAXUINT / DIRENT_SIZE ||
 		    entry >= seen_before->len ||
@@ -600,7 +620,7 @@ ole_init_info (GsfInfileMSOle *ole, GError **err)
 	 *    Maybe relax this later, but not much.
 	 */
 	isize = gsf_input_size (ole->input);
-	if (6 > bb_shift || bb_shift >= 31 || sb_shift > bb_shift ||
+	if (7 > bb_shift || bb_shift >= 31 || sb_shift > bb_shift ||
 	    (isize >> bb_shift) < 1) {
 		if (err != NULL)
 			*err = g_error_new (gsf_input_error_id (), 0,
@@ -630,7 +650,7 @@ ole_init_info (GsfInfileMSOle *ole, GError **err)
 		g_warning ("There are not supposed to be any blocks in the small block allocation table, yet there is a link to some.  Ignoring it.");
 	}
 
-	num_blocks = num_bat * (info->bb.size / BAT_INDEX_SIZE);
+	num_blocks = (size_t)num_bat * (info->bb.size / BAT_INDEX_SIZE);
 
 	/* very rough heuristic, just in case */
 	if (num_bat < info->max_block && info->num_sbat < info->max_block && num_blocks < G_MAXINT) {
@@ -909,20 +929,55 @@ gsf_infile_msole_new_child (GsfInfileMSOle *parent,
 
 	if (dirent->use_sb) {
 		unsigned int i;
-		int remaining;
+		size_t remaining, blocks_needed;
 
 		g_return_val_if_fail (sb_file != NULL, NULL);
 
 		child->stream.buf_size = remaining = dirent->size;
-		child->stream.buf = g_new (guint8, child->stream.buf_size);
+		if (child->stream.buf_size > (gsize)gsf_input_size (GSF_INPUT (sb_file))) {
+			if (err != NULL)
+				*err = g_error_new (gsf_input_error_id (), 0,
+						    // Don't bother translating
+						    "Insufficient data in file (%lu vs %lu)",
+						    (long)(child->stream.buf_size),
+						    (long)(gsf_input_size (GSF_INPUT (sb_file))));
+			g_object_unref (child);
+			return NULL;
+		}
 
-		for (i = 0 ; remaining > 0 && i < child->bat.num_blocks; i++, remaining -= info->sb.size)
+		child->stream.buf = g_try_new (guint8, child->stream.buf_size);
+		if (!child->stream.buf) {
+			if (err != NULL)
+				*err = g_error_new (gsf_input_error_id (), 0,
+						    _("Insufficient memory"));
+			g_object_unref (child);
+			return NULL;
+		}
+
+		blocks_needed = (remaining >> info->sb.shift) + ((remaining & (info->sb.size - 1)) > 0);
+		if (blocks_needed > child->bat.num_blocks) {
+			if (err)
+				*err = g_error_new (gsf_input_error_id (), 0, "insufficient blocks");
+			g_warning ("Small-block file '%s' has insufficient blocks (%u vs %zu) for the stated size (%lu)", dirent->name, child->bat.num_blocks, blocks_needed, (long)dirent->size);
+			g_object_unref (child);
+			return NULL;
+		}
+
+		// We could complain if there are too many blocks, but we just
+		// ignore them.
+
+		for (i = 0; remaining > 0 && i < child->bat.num_blocks; i++) {
+			gboolean qerr = FALSE;
+			size_t rsize = MIN (remaining, info->sb.size);
 			if (gsf_input_seek (GSF_INPUT (sb_file),
-					    (gsf_off_t)(child->bat.block [i] << info->sb.shift), G_SEEK_SET) ||
-			    !gsf_input_read (GSF_INPUT (sb_file),
-					     MIN (remaining, (int)info->sb.size),
-					     child->stream.buf + (i << info->sb.shift))) {
-
+					    (gsf_off_t)(child->bat.block[i]) << info->sb.shift,
+					    G_SEEK_SET))
+				qerr = TRUE;
+			if (!qerr && !gsf_input_read (GSF_INPUT (sb_file),
+						     rsize,
+						     child->stream.buf + ((gsf_off_t)i << info->sb.shift)))
+				qerr = TRUE;
+			if (qerr) {
 				g_warning ("failure reading block %d for '%s'", i, dirent->name);
 				if (err) *err = g_error_new
 						 (gsf_input_error_id (), 0,
@@ -930,12 +985,7 @@ gsf_infile_msole_new_child (GsfInfileMSOle *parent,
 				g_object_unref (child);
 				return NULL;
 			}
-
-		if (remaining > 0) {
-			if (err) *err = g_error_new (gsf_input_error_id (), 0, "insufficient blocks");
-			g_warning ("Small-block file '%s' has insufficient blocks (%u) for the stated size (%lu)", dirent->name, child->bat.num_blocks, (long)dirent->size);
-			g_object_unref (child);
-			return NULL;
+			remaining -= rsize;
 		}
 	}
 
@@ -951,7 +1001,7 @@ gsf_infile_msole_child_by_index (GsfInfile *infile, int target, GError **err)
 	if (err)
 		*err = NULL;
 
-	if (children == NULL && target >= 0 && (unsigned)target < children->len)
+	if (children != NULL && target >= 0 && (unsigned)target < children->len)
 		return gsf_infile_msole_new_child
 			(ole, g_ptr_array_index (children, target), err);
 

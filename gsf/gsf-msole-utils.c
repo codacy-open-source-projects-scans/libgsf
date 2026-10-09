@@ -535,13 +535,18 @@ msole_prop_min_size (guint32 type)
 static gboolean
 msole_prop_parse (GsfMSOleMetaDataSection *section,
 		  guint32 type, guint8 const **data, guint8 const *data_end,
-		  GValue *res)
+		  GValue *res, unsigned depth)
 {
 	char *str;
 	guint32 len;
 	gboolean const is_vector = type & VT_VECTOR;
 	GError *error;
 	guint bytes_needed;
+
+	/* VT_VECTOR|VT_VARIANT elements recurse through the VT_VARIANT case; cap
+	 * the nesting so a crafted self-referential chain cannot exhaust the stack. */
+	if (depth > 63)
+		return FALSE;
 
 	g_return_val_if_fail (!(type & (unsigned)(~0x1fff)), FALSE); /* not valid in a prop set */
 
@@ -573,7 +578,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 			GValue v = G_VALUE_INIT;
 			guint8 const *data0 = *data;
 			d (g_print ("\t[%d] ", i););
-			if (msole_prop_parse (section, type, data, data_end, &v)) {
+			if (msole_prop_parse (section, type, data, data_end, &v, depth + 1)) {
 				gsf_docprop_vector_append (vector, &v);
 				g_value_unset (&v);
 			}
@@ -690,7 +695,7 @@ msole_prop_parse (GsfMSOleMetaDataSection *section,
 		NEED_BYTES (4);
 		type = GSF_LE_GET_GUINT32 (*data);
 		ADVANCE;
-		return msole_prop_parse (section, type, data, data_end, res);
+		return msole_prop_parse (section, type, data, data_end, res, depth + 1);
 
 	case VT_UI1:
 		/* 1-byte unsigned integer */
@@ -1115,7 +1120,7 @@ msole_prop_read (GsfInput *in,
 		name = g_strdup (msole_prop_id_to_gsf (section, props[i].id, &linked));
 		d (g_print (" @ %x %x = ", (unsigned)props[i].offset, (unsigned)size););
 
-		if (msole_prop_parse (section, type, &data, data + size - 4, &stack_val)) {
+		if (msole_prop_parse (section, type, &data, data + size - 4, &stack_val, 0)) {
 			if (NULL != name) {
 				if (linked) {
 					GsfDocProp *prop = gsf_doc_meta_data_lookup (accum, name);
@@ -1343,6 +1348,13 @@ gsf_doc_meta_data_read_from_msole (GsfDocMetaData *accum, GsfInput *in)
 					GValue const *val = gsf_doc_prop_get_val (prop);
 					if (NULL != val && G_VALUE_HOLDS_INT (val)) {
 						int codepage = g_value_get_int (val);
+						// [MS-OLEPS] gives a section at most one
+						// codepage property, but a malformed file can
+						// contain several.
+						// It's unclear which one we should honour, so
+						// arbitrarily pick the last one.
+						if (sections[i].iconv_handle != (GIConv)-1)
+							gsf_iconv_close (sections[i].iconv_handle);
 						sections[i].iconv_handle =
 							gsf_msole_iconv_open_for_import (codepage);
 						sections[i].char_size = msole_codepage_char_size (codepage);
@@ -1463,7 +1475,7 @@ gvalue_to_msole_vt (GValue const *value, GsfMSOleMetaDataPropMap const *map)
 }
 
 static gboolean
-msole_metadata_write_string (WritePropState *state, const char *txt, gboolean for_dict)
+msole_metadata_write_string (WritePropState *state, const char *txt)
 {
 	guint8 buf[4];
 	guint32 len;
@@ -1594,7 +1606,7 @@ msole_metadata_write_prop (WritePropState *state,
 
 	case VT_LPSTR:
 	case VT_LPWSTR:
-		return msole_metadata_write_string (state, g_value_get_string (value), FALSE);
+		return msole_metadata_write_string (state, g_value_get_string (value));
 
 	case VT_FILETIME : {
 		GsfTimestamp const *ts = g_value_get_boxed (value);
@@ -1625,7 +1637,7 @@ cb_write_dict (char const *name, gpointer id, WritePropState *state)
 
 	GSF_LE_SET_GUINT32 (buf, GPOINTER_TO_UINT (id));
 	gsf_output_write (state->out, 4, buf);
-	msole_metadata_write_string (state, name, TRUE);
+	msole_metadata_write_string (state, name);
 }
 
 static gboolean

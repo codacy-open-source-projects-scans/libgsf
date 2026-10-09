@@ -1,3 +1,53 @@
+2026-09-29  Morten Welinder <terra@gnome.org>
+
+	* configure.ac: Post-release bump.
+
+2026-09-29  Morten Welinder <terra@gnome.org>
+
+	* Release 1.14.60
+
+2026-09-20  Morten Welinder <terra@gnome.org>
+
+	* configure.ac: Post-release bump.
+
+2026-09-20  Morten Welinder <terra@gnome.org>
+
+	* Release 1.14.59
+
+2026-07-31  Morten Welinder  <terra@gnome.org>
+
+	* gsf/gsf-msole-utils.c (msole_prop_parse): Add recursion limit.
+	Fixes #51.
+
+	* gsf/gsf-msole-utils.c (gsf_doc_meta_data_read_from_msole): Plug
+	leak related to malformed ole2 properties sections.  Patch from
+	Christian Grothoff <grothoff@gnu.org>.
+
+	* gsf/gsf-infile-msole.c (ole_dirent_new): Plug minor leaks.
+	Patch from Christian Grothoff <grothoff@gnu.org>.
+
+	* gsf/gsf-infile-zip.c (gsf_infile_zip_read): Fail if the
+	underlying stream doesn't give us all the data we need.  [#50]
+
+	* gsf/gsf-impl-utils.h (GSF_CLASS_FULL): Guard with
+	g_once_init_enter etc.  Patch from Vova+ [#53]
+
+2026-04-30  Morten Welinder <terra@gnome.org>
+
+	* configure.ac: Post-release bump.
+
+2026-04-30  Morten Welinder <terra@gnome.org>
+
+	* Release 1.14.58
+
+2026-04-29  Morten Welinder <terra@gnome.org>
+
+	* configure.ac: Post-release bump.
+
+2026-04-29  Morten Welinder <terra@gnome.org>
+
+	* Release 1.14.57
+
 2026-04-14  Morten Welinder  <terra@gnome.org>
 
 	* gsf/gsf-doc-meta-data.c (gsf_doc_prop_new): Initialize
