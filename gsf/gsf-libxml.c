@@ -28,6 +28,12 @@
 #include <math.h>
 #include <string.h>
 
+/* Sequester the xmlChar <-> char signedness casts here. */
+#define CXML2C(s) ((char const *)(s))
+#define CC2U(s) ((guint8 const *)(s))
+#define CU2C(s) ((char const *)(s))
+#define U2C(s) ((char *)(s))
+
 #undef DEBUG_PUSH_POP
 
 static GObjectClass *parent_class;
@@ -288,7 +294,7 @@ gsf_libxml_read (void *context, guint8 *buffer, int len)
 static int
 gsf_libxml_write (void *context, char const *buffer, int len)
 {
-	if (!gsf_output_write ((GsfOutput *)context, (size_t)len, buffer))
+	if (!gsf_output_write ((GsfOutput *)context, (size_t)len, CC2U (buffer)))
 		return -1;
 	return len;
 }
@@ -511,13 +517,13 @@ gsf_xml_probe (GsfInput *input, GsfXMLProbeFunc func)
 	input = gsf_input_uncompress (input);
 	gsf_input_seek (input, 0, G_SEEK_SET);
 
-	buf = gsf_input_read (input, 4, NULL);
+	buf = CU2C (gsf_input_read (input, 4, NULL));
 	if (NULL != buf ) {
 		parse_context = xmlCreatePushParserCtxt (&gsf_xml_prober, &probe_state,
 			(char *)buf, 4, gsf_input_name (input));
 		if (NULL != parse_context) {
 			while (NULL != probe_state.func &&
-			       NULL != (buf = gsf_input_read (input, 1, NULL)))
+			       NULL != (buf = CU2C (gsf_input_read (input, 1, NULL))))
 				xmlParseChunk (parse_context, (char *)buf, 1, 0);
 		}
 		xmlFreeParserCtxt (parse_context);
@@ -667,8 +673,8 @@ lookup_child (GsfXMLInInternal *state, int default_ns_id,
 		if (group->ns_id >= 0 &&
 		    group->ns_id < (int)state->ns_by_id->len &&
 		    NULL != (inst = g_ptr_array_index (state->ns_by_id, group->ns_id)) &&
-		    0 == strncmp (name, inst->tag, inst->taglen))
-			tmp = name + inst->taglen;
+		    0 == strncmp (CXML2C (name), inst->tag, inst->taglen))
+			tmp = CXML2C (name) + inst->taglen;
 		else if (group->ns_id < 0 ||			/* target is unqualified */
 			 group->ns_id == default_ns_id) {	/* target is in default ns */
 #if 0
@@ -676,7 +682,7 @@ lookup_child (GsfXMLInInternal *state, int default_ns_id,
 			inst = g_ptr_array_index (state->ns_by_id, group->ns_id);
 			g_warning ("accepted ns = '%s' looking for '%s'", inst->tag, name);
 #endif
-			tmp = name;
+			tmp = CXML2C (name);
 		} else
 			continue;
 
@@ -730,12 +736,12 @@ gsf_xml_in_start_element (GsfXMLInInternal *state, xmlChar const *name, xmlChar 
 	ns = state->pub.doc->ns;
 	if (ns != NULL && state->pub.node->check_children_for_ns) {
 		for (ns_ptr = attrs; ns_ptr != NULL && ns_ptr[0] && ns_ptr[1] ; ns_ptr += 2) {
-			if (strncmp (*ns_ptr, "xmlns", 5))
+			if (strncmp (CXML2C (*ns_ptr), "xmlns", 5))
 				continue;
 			if (ns_ptr[0][5] != '\0' && ns_ptr[0][5] != ':')
 				continue;
 			for (i = 0; (tmp = ns[i].uri) != NULL ; i++) {
-				if (strcmp (tmp, ns_ptr[1]))
+				if (strcmp (tmp, CXML2C (ns_ptr[1])))
 					continue;
 
 				if (ns_ptr[0][5] == '\0') {
@@ -746,10 +752,10 @@ gsf_xml_in_start_element (GsfXMLInInternal *state, xmlChar const *name, xmlChar 
 				inst = g_hash_table_lookup (state->ns_prefixes, ns_ptr[0] + 6);
 				if (inst == NULL) {
 					inst = g_new0 (GsfXMLInNSInstance, 1);
-					inst->tag    = g_strconcat (ns_ptr[0] + 6, ":", NULL);
+					inst->tag    = g_strconcat (CXML2C (ns_ptr[0] + 6), ":", NULL);
 					inst->taglen = strlen (inst->tag);
 					inst->ref_count = 1;
-					g_hash_table_insert (state->ns_prefixes, g_strdup (ns_ptr[0] + 6), inst);
+					g_hash_table_insert (state->ns_prefixes, g_strdup (CXML2C (ns_ptr[0] + 6)), inst);
 
 					if (ns[i].ns_id >= state->ns_by_id->len)
 						g_ptr_array_set_size (state->ns_by_id, ns[i].ns_id+1);
@@ -764,7 +770,7 @@ gsf_xml_in_start_element (GsfXMLInInternal *state, xmlChar const *name, xmlChar 
 			}
 
 			if (NULL == tmp) {
-				char *s = g_strdup (ns_ptr[0] + 6);
+				char *s = g_strdup (CXML2C (ns_ptr[0] + 6));
 				g_hash_table_replace (state->ns_unknowns, s, s);
 				if (gsf_debug_flag ("xml-ns"))
 					g_warning ("Unknown namespace uri = '%s'", ns_ptr[1]);
@@ -810,9 +816,9 @@ gsf_xml_in_start_element (GsfXMLInInternal *state, xmlChar const *name, xmlChar 
 	if (state->unknown_depth++ > 0)
 		return;
 
-	tmp = strchr (name, ':');
+	tmp = strchr (CXML2C (name), ':');
 	if (tmp) {
-		char *nsstr = g_strndup (name, tmp - (const char *)name);
+		char *nsstr = g_strndup (CXML2C (name), tmp - CXML2C (name));
 		if (g_hash_table_lookup (state->ns_unknowns, nsstr))
 			complain = FALSE;
 		g_free (nsstr);
@@ -910,7 +916,7 @@ gsf_xml_in_characters (GsfXMLInInternal *state, xmlChar const *chars, int len)
 		return;
 
 	if (state->pub.node->has_content != GSF_XML_NO_CONTENT)
-		g_string_append_len (state->pub.content, chars, len);
+		g_string_append_len (state->pub.content, CXML2C (chars), len);
 }
 
 static xmlEntityPtr
@@ -1660,7 +1666,7 @@ static inline void
 gsf_xml_out_indent (GsfXMLOut *xout)
 {
 	GsfXMLOutPrivate *priv = xout->priv;
-	static char const spaces [] =
+	static guint8 const spaces [] =
 		"                                        "
 		"                                        "
 		"                                        "
@@ -1692,7 +1698,7 @@ gsf_xml_out_start_element (GsfXMLOut *xout, char const *id)
 	priv = xout->priv;
 
 	if (priv->needs_header) {
-		static char const header0[] =
+		static guint8 const header0[] =
 			"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
 		gsf_output_write (xout->output, sizeof (header0) - 1, header0);
 		if (priv->doc_type != NULL)
@@ -1701,9 +1707,9 @@ gsf_xml_out_start_element (GsfXMLOut *xout, char const *id)
 	}
 	if (priv->state == GSF_XML_OUT_NOCONTENT) {
 		if (priv->pretty_print)
-			gsf_output_write (xout->output, 2, ">\n");
+			gsf_output_write (xout->output, 2, CC2U (">\n"));
 		else
-			gsf_output_write (xout->output, 1, ">");
+			gsf_output_write (xout->output, 1, CC2U (">"));
 	}
 
 	gsf_xml_out_indent (xout);
@@ -1738,9 +1744,9 @@ gsf_xml_out_end_element (GsfXMLOut *xout)
 	switch (priv->state) {
 	case GSF_XML_OUT_NOCONTENT:
 		if (priv->pretty_print)
-			gsf_output_write (xout->output, 3, "/>\n");
+			gsf_output_write (xout->output, 3, CC2U ("/>\n"));
 		else
-			gsf_output_write (xout->output, 2, "/>");
+			gsf_output_write (xout->output, 2, CC2U ("/>"));
 		break;
 
 	case GSF_XML_OUT_CHILD_PRETTY:
@@ -1816,7 +1822,7 @@ close_tag_if_neccessary (GsfXMLOut* xout)
 	GsfXMLOutPrivate *priv = xout->priv;
 	if (priv->state == GSF_XML_OUT_NOCONTENT) {
 		priv->state = GSF_XML_OUT_CONTENT;
-		gsf_output_write (xout->output, 1, ">");
+		gsf_output_write (xout->output, 1, CC2U (">"));
 	}
 }
 
@@ -1842,7 +1848,7 @@ gsf_xml_out_add_cstr_unchecked (GsfXMLOut *xout, char const *id,
 
 	if (id == NULL) {
 		close_tag_if_neccessary (xout);
-		gsf_output_write (xout->output, strlen (val_utf8), val_utf8);
+		gsf_output_write (xout->output, strlen (val_utf8), CC2U (val_utf8));
 	} else
 		gsf_output_printf (xout->output, " %s=\"%s\"", id, val_utf8);
 }
@@ -1861,8 +1867,8 @@ void
 gsf_xml_out_add_cstr (GsfXMLOut *xout, char const *id,
 		      char const *val_utf8)
 {
-	guint8 const *cur   = val_utf8;
-	guint8 const *start = val_utf8;
+	guint8 const *cur   = CC2U (val_utf8);
+	guint8 const *start = CC2U (val_utf8);
 
 	g_return_if_fail (xout != NULL);
 
@@ -1878,32 +1884,32 @@ gsf_xml_out_add_cstr (GsfXMLOut *xout, char const *id,
 			if (cur != start)
 				gsf_output_write (xout->output, cur-start, start);
 			start = ++cur;
-			gsf_output_write (xout->output, 4, "&lt;");
+			gsf_output_write (xout->output, 4, CC2U ("&lt;"));
 		} else if (*cur == '>') {
 			if (cur != start)
 				gsf_output_write (xout->output, cur-start, start);
 			start = ++cur;
-			gsf_output_write (xout->output, 4, "&gt;");
+			gsf_output_write (xout->output, 4, CC2U ("&gt;"));
 		} else if (*cur == '&') {
 			if (cur != start)
 				gsf_output_write (xout->output, cur-start, start);
 			start = ++cur;
-			gsf_output_write (xout->output, 5, "&amp;");
+			gsf_output_write (xout->output, 5, CC2U ("&amp;"));
 		} else if (*cur == '"') {
 			if (cur != start)
 				gsf_output_write (xout->output, cur-start, start);
 			start = ++cur;
-			gsf_output_write (xout->output, 6, "&quot;");
+			gsf_output_write (xout->output, 6, CC2U ("&quot;"));
 		} else if ((*cur == '\n' || *cur == '\r' || *cur == '\t') &&
 			   id != NULL) {
-			guint8 buf[8];
+			char buf[8];
 			sprintf (buf, "&#%d;", *cur);
 
 			if (cur != start)
 				gsf_output_write (xout->output, cur-start, start);
 			start = ++cur;
 
-			gsf_output_write (xout->output, strlen (buf), buf);
+			gsf_output_write (xout->output, strlen (buf), CC2U (buf));
 		} else if ((*cur >= 0x20 && *cur != 0x7f) ||
 			   (*cur == '\n' || *cur == '\r' || *cur == '\t')) {
 			cur++;
@@ -1923,7 +1929,7 @@ gsf_xml_out_add_cstr (GsfXMLOut *xout, char const *id,
 	if (cur != start)
 		gsf_output_write (xout->output, cur-start, start);
 	if (id != NULL)
-		gsf_output_write (xout->output, 1, "\"");
+		gsf_output_write (xout->output, 1, CC2U ("\""));
 }
 
 /**
@@ -2077,7 +2083,7 @@ gsf_xml_out_add_gvalue (GsfXMLOut *xout, char const *id, GValue const *val)
 		unsigned char c[2] = { 0, 0 };
 		c[0] = g_value_get_uchar (val);
 		/* FIXME: What if we are in 0x80-0xff? */
-		gsf_xml_out_add_cstr (xout, id, c);
+		gsf_xml_out_add_cstr (xout, id, U2C (c));
 		break;
 	}
 
@@ -2149,7 +2155,7 @@ gsf_xml_out_add_base64 (GsfXMLOut *xout, char const *id,
 		return;
 	if (id != NULL)
 		g_warning ("Stream a binary blob into an attribute ??");
-	gsf_xml_out_add_cstr_unchecked (xout, id, tmp);
+	gsf_xml_out_add_cstr_unchecked (xout, id, CU2C (tmp));
 	g_free (tmp);
 }
 
